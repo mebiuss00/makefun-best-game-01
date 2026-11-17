@@ -6,6 +6,7 @@ export const ACTION_CONFIRM = 'confirm';
 export const ACTION_PAUSE = 'pause';
 export const ACTION_RESTART = 'restart';
 export const ACTION_MUTE = 'mute';
+export const ACTION_DASH = 'dash';
 
 const KEY_DIRECTIONS = {
   ArrowUp: { x: 0, y: -1 },
@@ -25,6 +26,8 @@ const KEY_ACTIONS = {
   Escape: ACTION_PAUSE,
   KeyR: ACTION_RESTART,
   KeyM: ACTION_MUTE,
+  ShiftLeft: ACTION_DASH,
+  ShiftRight: ACTION_DASH,
 };
 
 /** Keys the game owns: the page never scrolls on them. */

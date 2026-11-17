@@ -142,5 +142,22 @@ export function createAudio() {
       tone(262, 523, 0.4, 'sine', 0.18);
       tone(392, 784, 0.4, 'sine', 0.12, 0.08);
     },
+    /** A dash: a rush of air and a rising whistle. */
+    dash() {
+      noise(0.16, 0.14);
+      tone(340, 980, 0.16, 'sine', 0.1);
+    },
+    /** A flare lantern bursts: a bright, cold arpeggio with a crackle. */
+    flare() {
+      [880, 1175, 1568, 2093].forEach((note, index) => {
+        tone(note, note, 0.28, 'sine', 0.14, index * 0.05);
+      });
+      noise(0.1, 0.06, 0.02);
+    },
+    /** A wraith close by: two detuned sines sliding down, barely there. */
+    wraith() {
+      tone(620, 310, 0.7, 'sine', 0.05);
+      tone(657, 329, 0.7, 'sine', 0.04, 0.03);
+    },
   };
 }

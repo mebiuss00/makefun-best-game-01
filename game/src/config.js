@@ -44,6 +44,34 @@ export const EMBER_POINTS = 10;
 /** Points for lighting a lantern. */
 export const LANTERN_POINTS = 100;
 
+/**
+ * The dash: a short burst of speed on Shift. While it lasts the wisp moves at
+ * DASH_SPEED and cannot be touched — a dash slips clean past a shadow — then
+ * it needs DASH_COOLDOWN seconds to gather again.
+ */
+export const DASH_SPEED = 13;
+export const DASH_SECONDS = 0.22;
+export const DASH_COOLDOWN = 2.4;
+
+/**
+ * A wraith is a shadow that forgot the walls: it drifts straight through them
+ * toward the wisp, but only while it is solid. Its cycle runs WRAITH_CYCLE
+ * seconds: solid and hunting for WRAITH_SOLID of them, then faded, still and
+ * harmless for the rest. It only hunts inside WRAITH_SENSE cells.
+ */
+export const WRAITH_SPEED = 0.88;
+export const WRAITH_SENSE = 5.5;
+export const WRAITH_CYCLE = 2.8;
+export const WRAITH_SOLID = 1.8;
+
+/**
+ * A flare lantern, once kindled, bursts bright enough to blind the dark:
+ * every shadow and wraith freezes for FREEZE_SECONDS, and the flare itself
+ * scores more than a plain lantern.
+ */
+export const FREEZE_SECONDS = 3.5;
+export const FLARE_POINTS = 150;
+
 /** Level-clear bonus: a flat award plus five points per light left. */
 export const CLEAR_BASE_POINTS = 250;
 export const CLEAR_LIGHT_POINTS = 5;
@@ -74,6 +102,11 @@ export const PALETTE = {
   exitOpen: '#7dffb0',
   shadow: '#241a3d',
   shadowEye: '#c86bff',
+  shadowFrozen: '#7fd4ff',
+  wraith: '#aebfff',
+  wraithEye: '#8ff4ff',
+  flare: '#aee9ff',
+  flareCore: '#ffffff',
   danger: '#ff5d6c',
   wisp: '#fff3c4',
 };

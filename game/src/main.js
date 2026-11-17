@@ -13,7 +13,9 @@ import { createAudio } from './audio.js';
 import {
   createWorld,
   EVENT_CLEAR,
+  EVENT_DASH,
   EVENT_EMBER,
+  EVENT_FLARE,
   EVENT_GATE,
   EVENT_HIT,
   EVENT_LANTERN,
@@ -22,6 +24,7 @@ import {
 } from './world.js';
 import {
   ACTION_CONFIRM,
+  ACTION_DASH,
   ACTION_MUTE,
   ACTION_PAUSE,
   ACTION_RESTART,
@@ -128,6 +131,8 @@ function backToTitle() {
 function onEvents(events) {
   if (events & EVENT_EMBER) audio.ember(world.state.combo);
   if (events & EVENT_LANTERN) audio.lantern();
+  if (events & EVENT_FLARE) audio.flare();
+  if (events & EVENT_DASH) audio.dash();
   if (events & EVENT_GATE) audio.gate();
   if (events & EVENT_HIT) audio.hurt();
   if (events & EVENT_CLEAR) {
@@ -151,9 +156,14 @@ function onEvents(events) {
   }
 }
 
+/** A dash pressed since the last simulation step, waiting to fire. */
+let pendingDash = false;
+
 function handleActions() {
   for (const action of input.consumeActions()) {
-    if (action === ACTION_MUTE) {
+    if (action === ACTION_DASH) {
+      if (screen === SCREEN_PLAY) pendingDash = true;
+    } else if (action === ACTION_MUTE) {
       audio.toggleMute();
     } else if (action === ACTION_PAUSE) {
       if (screen === SCREEN_PLAY) {
@@ -181,6 +191,8 @@ function handleActions() {
 
 let last = performance.now();
 let accumulator = 0;
+/** The last time a nearby wraith made its sound; it whispers at most rarely. */
+let lastWraithSound = 0;
 
 function frame(now) {
   const elapsed = Math.min(MAX_FRAME, (now - last) / 1000);
@@ -192,11 +204,22 @@ function frame(now) {
     accumulator += elapsed;
     while (accumulator >= STEP) {
       accumulator -= STEP;
-      const events = world.step(STEP, input.direction());
+      const events = world.step(STEP, input.direction(), { dash: pendingDash });
+      pendingDash = false;
       onEvents(events);
       if (screen !== SCREEN_PLAY) {
         accumulator = 0;
         break;
+      }
+    }
+    // A solid wraith within earshot whispers, never more than every 1.4 s.
+    if (now - lastWraithSound > 1400) {
+      const player = world.state.player;
+      const near = world.state.wraiths.some((wraith) => world.wraithSolid(wraith)
+        && Math.abs(wraith.x - player.x) + Math.abs(wraith.y - player.y) <= 3.5);
+      if (near) {
+        audio.wraith();
+        lastWraithSound = now;
       }
     }
   }

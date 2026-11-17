@@ -3,7 +3,18 @@
 // level-clear, game-over and victory screens. The logical size is always
 // 1280x720; the page scales the canvas to the window.
 
-import { HUD_HEIGHT, LIGHT_MAX, PALETTE, VIEW } from './config.js';
+import {
+  CLEAR_BASE_POINTS,
+  CLEAR_LIGHT_POINTS,
+  DASH_COOLDOWN,
+  HUD_HEIGHT,
+  LIGHT_MAX,
+  PALETTE,
+  VIEW,
+  WRAITH_CYCLE,
+  WRAITH_SOLID,
+} from './config.js';
+import { LEVELS } from './levels.js';
 
 export const SCREEN_TITLE = 'title';
 export const SCREEN_PLAY = 'play';
@@ -130,13 +141,39 @@ export function createRenderer(canvas) {
     }
   }
 
+  /** A four-point star, the flare lantern's mark. */
+  function drawStar(x, y, radius) {
+    ctx.beginPath();
+    for (let index = 0; index < 8; index += 1) {
+      const angle = (index / 8) * Math.PI * 2 - Math.PI / 2;
+      const reach = index % 2 === 0 ? radius : radius * 0.3;
+      const px = x + Math.cos(angle) * reach;
+      const py = y + Math.sin(angle) * reach;
+      if (index === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+  }
+
   function drawLanterns(state, lay, time) {
     for (const lantern of state.level.lanterns) {
       const centre = cellCentre(lay, lantern.x, lantern.y);
       const post = lay.cell * 0.3;
-      ctx.fillStyle = '#3a2f22';
+      ctx.fillStyle = lantern.flare ? '#22384a' : '#3a2f22';
       ctx.fillRect(centre.x - 2, centre.y - post, 4, post * 2);
-      if (lantern.lit) {
+      if (lantern.lit && lantern.flare) {
+        const flicker = 0.85 + Math.sin(time * 7 + lantern.x * 3 + lantern.y) * 0.1;
+        ctx.globalCompositeOperation = 'lighter';
+        drawGlow(centre.x, centre.y - post, lay.cell * 1.6, 'rgba(174,233,255,0.55)', flicker);
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.fillStyle = PALETTE.flare;
+        drawStar(centre.x, centre.y - post, lay.cell * 0.2);
+        ctx.fill();
+        ctx.fillStyle = PALETTE.flareCore;
+        ctx.beginPath();
+        ctx.arc(centre.x, centre.y - post, lay.cell * 0.07, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (lantern.lit) {
         const flicker = 0.8 + Math.sin(time * 5 + lantern.x * 2 + lantern.y) * 0.12;
         ctx.globalCompositeOperation = 'lighter';
         drawGlow(centre.x, centre.y - post, lay.cell * 1.5, 'rgba(255,201,94,0.5)', flicker);
@@ -149,6 +186,16 @@ export function createRenderer(canvas) {
         ctx.beginPath();
         ctx.arc(centre.x, centre.y - post, lay.cell * 0.08, 0, Math.PI * 2);
         ctx.fill();
+      } else if (lantern.flare) {
+        ctx.strokeStyle = PALETTE.flare;
+        ctx.lineWidth = 2;
+        drawStar(centre.x, centre.y - post, lay.cell * 0.17);
+        ctx.stroke();
+        ctx.fillStyle = PALETTE.flare;
+        ctx.font = `bold ${Math.round(lay.cell * 0.3)}px system-ui, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('?', centre.x, centre.y + post * 0.7);
       } else {
         ctx.strokeStyle = PALETTE.lanternUnlit;
         ctx.lineWidth = 2;
@@ -186,27 +233,86 @@ export function createRenderer(canvas) {
   }
 
   function drawShadows(state, lay, time) {
+    const frozen = state.freezeTimer > 0;
     for (const shadow of state.shadows) {
       const centre = cellCentre(lay, shadow.x, shadow.y);
-      const bob = Math.sin(time * 2 + shadow.fromX * 3 + shadow.fromY) * lay.cell * 0.05;
+      const bob = frozen ? 0 : Math.sin(time * 2 + shadow.fromX * 3 + shadow.fromY) * lay.cell * 0.05;
       ctx.globalAlpha = 0.92;
-      ctx.fillStyle = PALETTE.shadow;
+      ctx.fillStyle = frozen ? '#33506e' : PALETTE.shadow;
       ctx.beginPath();
       ctx.arc(centre.x, centre.y + bob, lay.cell * 0.34, 0, Math.PI * 2);
       ctx.fill();
-      ctx.fillStyle = '#1a1030';
+      ctx.fillStyle = frozen ? '#24405c' : '#1a1030';
       ctx.beginPath();
       ctx.arc(centre.x - lay.cell * 0.12, centre.y + bob + lay.cell * 0.3, lay.cell * 0.16, 0, Math.PI);
       ctx.arc(centre.x + lay.cell * 0.12, centre.y + bob + lay.cell * 0.3, lay.cell * 0.16, 0, Math.PI);
       ctx.fill();
+      if (frozen) {
+        // A crust of flare-ice over the frozen shadow.
+        ctx.globalAlpha = 0.5;
+        ctx.fillStyle = PALETTE.shadowFrozen;
+        ctx.beginPath();
+        ctx.arc(centre.x - lay.cell * 0.1, centre.y + bob - lay.cell * 0.12, lay.cell * 0.1, 0, Math.PI * 2);
+        ctx.arc(centre.x + lay.cell * 0.14, centre.y + bob + lay.cell * 0.05, lay.cell * 0.07, 0, Math.PI * 2);
+        ctx.fill();
+      }
       ctx.globalAlpha = 1;
       const lookX = Math.sign(state.player.x - shadow.x) * lay.cell * 0.05;
       const lookY = Math.sign(state.player.y - shadow.y) * lay.cell * 0.04;
-      ctx.fillStyle = PALETTE.shadowEye;
+      ctx.fillStyle = frozen ? '#dff6ff' : PALETTE.shadowEye;
       ctx.beginPath();
       ctx.arc(centre.x - lay.cell * 0.12 + lookX, centre.y + bob - lay.cell * 0.06 + lookY, lay.cell * 0.055, 0, Math.PI * 2);
       ctx.arc(centre.x + lay.cell * 0.12 + lookX, centre.y + bob - lay.cell * 0.06 + lookY, lay.cell * 0.055, 0, Math.PI * 2);
       ctx.fill();
+    }
+  }
+
+  /**
+   * A wraith: a pale ghost with a torn skirt, near-invisible while faded and
+   * unmistakable while solid. It pays the walls no mind at all.
+   */
+  function drawWraiths(state, lay, time) {
+    const frozen = state.freezeTimer > 0;
+    for (const wraith of state.wraiths) {
+      const centre = cellCentre(lay, wraith.x, wraith.y);
+      const phase = wraith.cycle % WRAITH_CYCLE;
+      const solid = phase < WRAITH_SOLID;
+      // The last blink of each phase is a fade, not a pop.
+      let alpha = solid ? 0.92 : 0.25;
+      if (solid && phase > WRAITH_SOLID - 0.3) alpha = 0.25 + 0.67 * ((WRAITH_SOLID - phase) / 0.3);
+      if (!solid && phase > WRAITH_CYCLE - 0.3) alpha = 0.25 + 0.67 * ((phase - (WRAITH_CYCLE - 0.3)) / 0.3);
+      if (frozen) alpha = Math.max(alpha, 0.55);
+      const drift = Math.sin(time * 1.6 + wraith.x * 2 + wraith.y) * lay.cell * 0.06;
+      const r = lay.cell * 0.32;
+      if (solid && !frozen) {
+        ctx.globalCompositeOperation = 'lighter';
+        drawGlow(centre.x, centre.y + drift, lay.cell * 0.95, 'rgba(174,191,255,0.35)', alpha * 0.7);
+        ctx.globalCompositeOperation = 'source-over';
+      }
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = frozen ? '#7fb8d9' : PALETTE.wraith;
+      ctx.beginPath();
+      ctx.arc(centre.x, centre.y + drift - r * 0.15, r, Math.PI, 0);
+      // The torn skirt: three hanging points that sway as it drifts.
+      const sway = Math.sin(time * 3 + wraith.y * 2) * r * 0.16;
+      ctx.lineTo(centre.x + r, centre.y + drift + r * 0.75);
+      ctx.lineTo(centre.x + r * 0.4, centre.y + drift + r * 0.4 + sway);
+      ctx.lineTo(centre.x, centre.y + drift + r * 0.85);
+      ctx.lineTo(centre.x - r * 0.4, centre.y + drift + r * 0.4 - sway);
+      ctx.lineTo(centre.x - r, centre.y + drift + r * 0.75);
+      ctx.closePath();
+      ctx.fill();
+      ctx.globalAlpha = Math.min(1, alpha + 0.1);
+      ctx.fillStyle = frozen ? '#eafcff' : PALETTE.wraithEye;
+      ctx.beginPath();
+      ctx.arc(centre.x - r * 0.34, centre.y + drift - r * 0.2, r * 0.14, 0, Math.PI * 2);
+      ctx.arc(centre.x + r * 0.34, centre.y + drift - r * 0.2, r * 0.14, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = frozen ? '#eafcff' : '#5f74c9';
+      ctx.beginPath();
+      ctx.arc(centre.x, centre.y + drift + r * 0.28, r * 0.13, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
     }
   }
 
@@ -266,12 +372,18 @@ export function createRenderer(canvas) {
     gradient.addColorStop(1, 'rgba(4,6,16,0.86)');
     ctx.fillStyle = gradient;
     ctx.fillRect(lay.originX - 4, lay.originY - 4, lay.cell * state.level.width + 8, lay.cell * state.level.height + 8);
-    // Lit lanterns shine through the dark.
+    // Lit lanterns shine through the dark: warm gold, cold blue for a flare.
     for (const lantern of state.level.lanterns) {
       if (!lantern.lit) continue;
       const at = cellCentre(lay, lantern.x, lantern.y);
       ctx.globalCompositeOperation = 'lighter';
-      drawGlow(at.x, at.y - lay.cell * 0.3, lay.cell * 1.4, 'rgba(255,201,94,0.4)', 0.8);
+      drawGlow(
+        at.x,
+        at.y - lay.cell * 0.3,
+        lay.cell * (lantern.flare ? 1.7 : 1.4),
+        lantern.flare ? 'rgba(174,233,255,0.45)' : 'rgba(255,201,94,0.4)',
+        0.8,
+      );
       ctx.globalCompositeOperation = 'source-over';
     }
   }
@@ -301,25 +413,36 @@ export function createRenderer(canvas) {
     ctx.textAlign = 'center';
     ctx.fillStyle = PALETTE.textDim;
     ctx.font = 'bold 13px system-ui, sans-serif';
-    ctx.fillText(`LEVEL ${state.levelIndex + 1} / 5`, 640, 20);
+    ctx.fillText(`LEVEL ${state.levelIndex + 1} / ${LEVELS.length}`, 640, 20);
     ctx.fillStyle = PALETTE.text;
     ctx.font = 'bold 20px system-ui, sans-serif';
     ctx.fillText(state.level.name, 640, 44);
 
-    // Lanterns lit, as small lamps.
+    // Lanterns lit, as small lamps; a flare lantern shows as a blue star.
     const lit = state.lanternsLit;
     const total = state.level.lanterns.length;
     for (let index = 0; index < total; index += 1) {
       const x = 800 + index * 26;
-      ctx.fillStyle = index < lit ? PALETTE.lanternLit : PALETTE.lanternUnlit;
-      ctx.beginPath();
-      ctx.arc(x, 32, 8, 0, Math.PI * 2);
-      ctx.fill();
+      const lantern = state.level.lanterns[index];
+      if (lantern.flare) {
+        ctx.fillStyle = lantern.lit ? PALETTE.flare : PALETTE.lanternUnlit;
+        drawStar(x, 32, 10);
+        ctx.fill();
+      } else {
+        ctx.fillStyle = lantern.lit ? PALETTE.lanternLit : PALETTE.lanternUnlit;
+        ctx.beginPath();
+        ctx.arc(x, 32, 8, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
     ctx.fillStyle = PALETTE.textDim;
     ctx.font = 'bold 13px system-ui, sans-serif';
+    // Right-aligned to a fixed edge left of the light meter: with seven
+    // lanterns (the last level) a left-aligned count after the icons
+    // would run under the meter.
+    ctx.textAlign = 'right';
+    ctx.fillText(`${lit}/${total}`, 990, 33);
     ctx.textAlign = 'left';
-    ctx.fillText(`${lit}/${total}`, 800 + total * 26 + 6, 33);
 
     // The light meter.
     const meterX = 1000;
@@ -344,6 +467,36 @@ export function createRenderer(canvas) {
       ctx.fillStyle = PALETTE.danger;
       ctx.font = 'bold 13px system-ui, sans-serif';
       ctx.fillText('LOW', meterX + meterWidth + 10, 38);
+    }
+
+    // The dash meter, under the light meter: full and amber means ready.
+    const dashX = 1000;
+    const dashWidth = 200;
+    ctx.fillStyle = PALETTE.textDim;
+    ctx.font = 'bold 10px system-ui, sans-serif';
+    ctx.fillText('DASH', dashX, 57);
+    ctx.fillStyle = '#232a4d';
+    roundRect(ctx, dashX + 42, 52, dashWidth - 42, 8, 4);
+    ctx.fill();
+    const dashFill = state.dashTime > 0 ? 1 : 1 - Math.max(0, state.dashCooldown) / DASH_COOLDOWN;
+    ctx.fillStyle = state.dashTime > 0 ? '#ffffff' : '#ffb347';
+    if (dashFill > 0.03) {
+      roundRect(ctx, dashX + 42, 52, (dashWidth - 42) * dashFill, 8, 4);
+      ctx.fill();
+    }
+    if (state.dashTime <= 0 && state.dashCooldown <= 0) {
+      ctx.fillStyle = PALETTE.textDim;
+      ctx.font = '10px system-ui, sans-serif';
+      ctx.fillText('SHIFT', dashX + dashWidth + 10, 57);
+    }
+
+    // While the flare's freeze lasts, say so under the level name.
+    if (state.freezeTimer > 0) {
+      ctx.textAlign = 'center';
+      ctx.fillStyle = PALETTE.flare;
+      ctx.font = 'bold 12px system-ui, sans-serif';
+      ctx.fillText(`THE DARK IS FROZEN · ${state.freezeTimer.toFixed(1)}`, 640, 59);
+      ctx.textAlign = 'left';
     }
 
     if (state.combo > 1) {
@@ -411,11 +564,22 @@ export function createRenderer(canvas) {
     drawLanterns(state, lay, time);
     drawEmbers(state, lay, time);
     drawShadows(state, lay, time);
+    drawWraiths(state, lay, time);
     drawPlayer(state, lay, time);
     drawParticles(state, lay);
     drawDarkness(state, lay);
     drawPopups(state, lay);
     ctx.restore();
+
+    // When the light runs low the dark presses in at the edges, pulsing red.
+    if (screen === SCREEN_PLAY && state.light < 25 && state.light > 0) {
+      const pulse = 0.1 + Math.sin(time * 4) * 0.05;
+      const vignette = ctx.createRadialGradient(640, 390, 300, 640, 390, 720);
+      vignette.addColorStop(0, 'rgba(255,93,108,0)');
+      vignette.addColorStop(1, `rgba(255,93,108,${pulse.toFixed(3)})`);
+      ctx.fillStyle = vignette;
+      ctx.fillRect(0, 0, VIEW.width, VIEW.height);
+    }
 
     drawHud(state, ui);
 
@@ -433,9 +597,10 @@ export function createRenderer(canvas) {
       ctx.fillText('Keep the light alive.', 640, 310);
       ctx.fillStyle = PALETTE.textDim;
       ctx.font = '19px system-ui, sans-serif';
-      ctx.fillText('Kindle every lantern, gather embers to feed your light,', 640, 380);
-      ctx.fillText('and slip through the open gate — before the dark closes in.', 640, 408);
-      ctx.fillText('Move: WASD / arrows, or click a cell to walk there. P pauses, M mutes.', 640, 448);
+      ctx.fillText('Kindle every lantern, gather embers to feed your light,', 640, 372);
+      ctx.fillText('and slip through the open gate — before the dark closes in.', 640, 400);
+      ctx.fillText('Blue flare lanterns freeze the dark. Pale wraiths drift through walls.', 640, 428);
+      ctx.fillText('Move: WASD / arrows, or click a cell. Shift dashes, P pauses, M mutes.', 640, 456);
       if (ui.best > 0) {
         ctx.fillStyle = PALETTE.text;
         ctx.font = 'bold 20px system-ui, sans-serif';
@@ -452,7 +617,7 @@ export function createRenderer(canvas) {
         id: 'resume', label: 'Resume', x: 540, y: 380, width: 200, height: 56,
       }], ui.mouse);
     } else if (screen === SCREEN_CLEAR) {
-      const bonus = 250 + Math.round(state.light) * 5;
+      const bonus = CLEAR_BASE_POINTS + Math.round(state.light) * CLEAR_LIGHT_POINTS;
       buttons = overlayPanel(`Level ${state.levelIndex + 1} clear!`, [
         `The ${state.level.name} lanterns all burn.`,
         `Clear bonus +${bonus}  ·  Score ${state.score}`,
@@ -470,7 +635,7 @@ export function createRenderer(canvas) {
       }], ui.mouse);
     } else if (screen === SCREEN_WIN) {
       buttons = overlayPanel('Every lantern burns bright', [
-        `All five levels are lit. The night is yours.`,
+        `All ${LEVELS.length} levels are lit. The night is yours.`,
         `Final score ${state.score}  ·  Best ${Math.max(ui.best, state.score)}`,
         'Press R or click to keep the light again.',
       ], [{

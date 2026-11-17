@@ -4,6 +4,7 @@
 // the same seed always gives the same frame.
 
 import { STEP } from './config.js';
+import { LEVELS } from './levels.js';
 import { EVENT_OVER, EVENT_WIN } from './world.js';
 import { SCREEN_OVER, SCREEN_PLAY, SCREEN_TITLE, SCREEN_WIN } from './render.js';
 
@@ -31,11 +32,15 @@ function autopilot(world) {
   if (player.moving) return null;
   const at = { x: player.toX, y: player.toY };
 
-  /** The distance from a cell to the nearest shadow. */
+  /** The distance from a cell to the nearest shadow or solid wraith. */
   const safest = (x, y) => {
     let nearest = Infinity;
     for (const shadow of state.shadows) {
       nearest = Math.min(nearest, Math.abs(shadow.x - x) + Math.abs(shadow.y - y));
+    }
+    for (const wraith of state.wraiths) {
+      if (!world.wraithSolid(wraith)) continue;
+      nearest = Math.min(nearest, Math.abs(wraith.x - x) + Math.abs(wraith.y - y));
     }
     return nearest;
   };
@@ -104,7 +109,7 @@ export function stageShot(name, world) {
     return { screen: SCREEN_PLAY, best: world.state.score };
   }
   if (name === 'win') {
-    world.loadLevel(4);
+    world.loadLevel(LEVELS.length - 1);
     world.lightAllLanterns();
     const exit = world.state.level.exit;
     const spot = DIRECTIONS.map((dir) => ({ x: exit.x + dir.x, y: exit.y + dir.y }))

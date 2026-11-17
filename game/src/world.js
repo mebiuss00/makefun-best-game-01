@@ -1,6 +1,9 @@
 // The simulation: one wisp of light, a dark maze, lanterns to kindle, embers to
-// gather and shadows to avoid. Everything steps in fixed 1/60 s slices, so a
-// scene played forward from the same seed always ends the same way.
+// gather, shadows to avoid and wraiths that drift through the walls to reach
+// it. The wisp can dash — a brief, untouchable burst of speed — and a flare
+// lantern's light freezes everything that hunts it. Everything steps in fixed
+// 1/60 s slices, so a scene played forward from the same seed always ends the
+// same way.
 
 import {
   CLEAR_BASE_POINTS,
@@ -8,8 +11,13 @@ import {
   COMBO_MAX,
   COMBO_STEP,
   COMBO_WINDOW,
+  DASH_COOLDOWN,
+  DASH_SECONDS,
+  DASH_SPEED,
   EMBER_LIGHT,
   EMBER_POINTS,
+  FLARE_POINTS,
+  FREEZE_SECONDS,
   HIT_DAMAGE,
   INVULN_SECONDS,
   LANTERN_POINTS,
@@ -19,6 +27,10 @@ import {
   PLAYER_SPEED,
   SHADOW_CHASE_RANGE,
   SHADOW_SPEED,
+  WRAITH_CYCLE,
+  WRAITH_SENSE,
+  WRAITH_SOLID,
+  WRAITH_SPEED,
 } from './config.js';
 import { LEVELS, findPath, parseLevel } from './levels.js';
 
@@ -29,6 +41,8 @@ export const EVENT_CLEAR = 8;
 export const EVENT_WIN = 16;
 export const EVENT_OVER = 32;
 export const EVENT_GATE = 64;
+export const EVENT_DASH = 128;
+export const EVENT_FLARE = 256;
 
 const DIRECTIONS = [
   { x: 1, y: 0 },
@@ -47,6 +61,10 @@ export function createWorld(random) {
     level: null,
     player: null,
     shadows: [],
+    wraiths: [],
+    dashTime: 0,
+    dashCooldown: 0,
+    freezeTimer: 0,
     light: LIGHT_MAX,
     score: 0,
     combo: 0,
@@ -96,6 +114,16 @@ export function createWorld(random) {
       shadow.think = random();
       return shadow;
     });
+    // A wraith is not a walker: it drifts on float coordinates straight
+    // through the walls, phasing in and out of solidity on its own cycle.
+    state.wraiths = state.level.wraiths.map((cell) => ({
+      x: cell.x,
+      y: cell.y,
+      cycle: random() * WRAITH_CYCLE,
+    }));
+    state.dashTime = 0;
+    state.dashCooldown = 0;
+    state.freezeTimer = 0;
     state.light = LIGHT_MAX;
     state.lanternsLit = 0;
     state.gateOpen = false;
@@ -166,13 +194,26 @@ export function createWorld(random) {
         lantern.lit = true;
         state.lanternsLit += 1;
         const gain = chainCombo();
-        const points = Math.round(LANTERN_POINTS * gain);
-        state.score += points;
-        burst(cell.x + 0.5, cell.y + 0.5, '#ffc95e', 18, 3);
-        popup(cell.x + 0.5, cell.y, `+${points}`, '#ffc95e');
-        events |= EVENT_LANTERN;
+        if (lantern.flare) {
+          // The flare blinds the dark: everything hunting the wisp freezes.
+          const points = Math.round(FLARE_POINTS * gain);
+          state.score += points;
+          state.freezeTimer = FREEZE_SECONDS;
+          burst(cell.x + 0.5, cell.y + 0.5, '#aee9ff', 26, 4.5);
+          burst(cell.x + 0.5, cell.y + 0.5, '#ffffff', 10, 2.5);
+          popup(cell.x + 0.5, cell.y, `FLARE +${points}`, '#aee9ff');
+          events |= EVENT_LANTERN | EVENT_FLARE;
+        } else {
+          const points = Math.round(LANTERN_POINTS * gain);
+          state.score += points;
+          burst(cell.x + 0.5, cell.y + 0.5, '#ffc95e', 18, 3);
+          popup(cell.x + 0.5, cell.y, `+${points}`, '#ffc95e');
+          events |= EVENT_LANTERN;
+        }
         if (state.lanternsLit === state.level.lanterns.length) {
           state.gateOpen = true;
+          const exit = state.level.exit;
+          burst(exit.x + 0.5, exit.y + 0.5, '#7dffb0', 22, 3.5);
           events |= EVENT_GATE;
         }
       }
@@ -270,6 +311,30 @@ export function createWorld(random) {
     }
   }
 
+  /** Whether a wraith is solid right now: touchable, and able to touch. */
+  function wraithSolid(wraith) {
+    return (wraith.cycle % WRAITH_CYCLE) < WRAITH_SOLID;
+  }
+
+  /**
+   * A wraith drifts straight at the wisp through whatever stands between,
+   * but only while solid and only once the wisp is inside its sense range.
+   * While the flare's freeze lasts it hangs where it is, cycle and all.
+   */
+  function stepWraith(wraith, dt) {
+    if (state.freezeTimer > 0) return;
+    wraith.cycle += dt;
+    if (!wraithSolid(wraith)) return;
+    const player = state.player;
+    const dx = player.x - wraith.x;
+    const dy = player.y - wraith.y;
+    const distance = Math.hypot(dx, dy);
+    if (distance <= 0.001 || distance > WRAITH_SENSE) return;
+    const reach = Math.min(distance, WRAITH_SPEED * dt);
+    wraith.x += (dx / distance) * reach;
+    wraith.y += (dy / distance) * reach;
+  }
+
   function hitPlayer(shadow) {
     const player = state.player;
     player.invuln = INVULN_SECONDS;
@@ -305,6 +370,17 @@ export function createWorld(random) {
       state.comboTimer -= dt;
       if (state.comboTimer <= 0) state.combo = 0;
     }
+    if (state.freezeTimer > 0) state.freezeTimer -= dt;
+    if (state.dashCooldown > 0) state.dashCooldown -= dt;
+    if (state.dashTime > 0) state.dashTime -= dt;
+    // A dash asked for on a ready cooldown fires at once, even mid-step: the
+    // burst covers whatever step the wisp is already taking.
+    if (options.dash && state.dashCooldown <= 0 && state.dashTime <= 0) {
+      state.dashTime = DASH_SECONDS;
+      state.dashCooldown = DASH_COOLDOWN;
+      burst(player.x + 0.5, player.y + 0.5, '#ffe9a8', 8, 2);
+      events |= EVENT_DASH;
+    }
     if (drain) {
       state.light -= (LIGHT_DRAIN_BASE + state.levelIndex * LIGHT_DRAIN_PER_LEVEL) * dt;
       if (state.light <= 0) {
@@ -327,7 +403,8 @@ export function createWorld(random) {
         if (move === null) state.clickTarget = null;
       }
     }
-    if (stepWalker(player, PLAYER_SPEED, dt)) {
+    const speed = state.dashTime > 0 ? DASH_SPEED : PLAYER_SPEED;
+    if (stepWalker(player, speed, dt)) {
       events |= collectAt({ x: player.toX, y: player.toY });
       if (state.over || state.won || state.cleared) return events;
       if (move !== null) startMove(player, move);
@@ -337,14 +414,47 @@ export function createWorld(random) {
       player.queuedDir = direction;
     }
 
-    for (const shadow of state.shadows) stepShadow(shadow, dt);
+    // The flare's freeze holds every shadow exactly where it stood.
+    if (state.freezeTimer <= 0) {
+      for (const shadow of state.shadows) stepShadow(shadow, dt);
+    }
+    for (const wraith of state.wraiths) stepWraith(wraith, dt);
 
-    // A shadow's touch lands when the two are close and the wisp is not safe.
-    if (player.invuln <= 0) {
+    // A moving wisp sheds ember motes; a dashing one leaves a bright streak.
+    if (player.moving) {
+      const dashing = state.dashTime > 0;
+      if (dashing || random() < dt * 24) {
+        state.particles.push({
+          x: player.x + 0.5 + (random() - 0.5) * 0.3,
+          y: player.y + 0.5 + (random() - 0.5) * 0.3,
+          vx: -player.dirX * (dashing ? 1.6 : 0.3),
+          vy: -player.dirY * (dashing ? 1.6 : 0.3),
+          life: dashing ? 0.35 : 0.5,
+          maxLife: dashing ? 0.35 : 0.5,
+          size: dashing ? 0.12 : 0.06,
+          colour: dashing ? '#ffe9a8' : '#ffb347',
+        });
+      }
+    }
+
+    // A touch lands when the two are close and the wisp is not safe: neither
+    // freshly hurt nor mid-dash — a dash slips clean through the dark.
+    if (player.invuln <= 0 && state.dashTime <= 0) {
       for (const shadow of state.shadows) {
         if (Math.abs(shadow.x - player.x) < 0.55 && Math.abs(shadow.y - player.y) < 0.55) {
           events |= hitPlayer(shadow);
           break;
+        }
+      }
+      if (!state.over && player.invuln <= 0) {
+        for (const wraith of state.wraiths) {
+          if (!wraithSolid(wraith)) continue;
+          if (Math.abs(wraith.x - player.x) < 0.55 && Math.abs(wraith.y - player.y) < 0.55) {
+            events |= hitPlayer(wraith);
+            // A wraith that lands its touch spends itself: it fades at once.
+            wraith.cycle = WRAITH_SOLID + 0.1;
+            break;
+          }
         }
       }
     }
@@ -436,6 +546,15 @@ export function createWorld(random) {
       shadow.progress = 1;
       shadow.moving = false;
     },
+    /** Move one wraith to a cell (screenshot staging only). */
+    placeWraith(index, x, y) {
+      const wraith = state.wraiths[index];
+      if (!wraith) return;
+      wraith.x = x;
+      wraith.y = y;
+    },
+    /** Whether a wraith is solid right now, for the renderer. */
+    wraithSolid,
     /** Set the light meter (screenshot staging only). */
     setLight(value) {
       state.light = value;
